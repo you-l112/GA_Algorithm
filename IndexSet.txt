@@ -1,0 +1,258 @@
+#include <iostream>
+#include <vector>
+#include <random>
+#include <cmath>
+#include<fstream>
+#include <numeric>
+#include <algorithm>
+#include <iomanip>
+
+using namespace std;
+const int DP = 60; //需求点个数
+const int jN = 8; //候选设施点数量 也是每条染色体的长度
+const int jE = 5; //市场原有设施点数量
+const int M = 20; // 每个数组内元素个数
+const double speed = 25;//配送车辆行驶速度
+const int t = 40;//准时送达时间
+double distanN[DP][jN];//需求点和新设施候选点之间的距离
+double distanE[DP][jE];//需求点和市场原有设施点之间的距离
+double w[DP];//各个需求点对应的需求量，需求量范围[10,100]
+double Cfac[jN];//新设施候选点开设的固定成本，取值范围[50,250]
+
+//新进入市场企业与原有企业交通时间数组的均值和标准差指标
+double TNmean[DP][jN], TNsigma[DP][jN], TEmean[DP][jE], TEsigma[DP][jE];
+//储存随机生成的符合对数正态分布的交通时间数组-三维数组
+vector<vector<vector<double>>> TrantimeN(DP, vector<vector<double>>(jN, vector<double>(M)));
+vector<vector<vector<double>>> TrantimeE(DP, vector<vector<double>>(jE, vector<double>(M)));
+double rN[DP][jN], rE[DP][jE];//准时送达率
+
+//函数声明：设施点与需求点之间距离的初始化
+void Data_initiate();
+//函数声明：设施点与需求点之间交通时间对数正态分布随机产生
+void genren();
+//函数声明：设施点与需求点之间准时送达率计算
+void ratio();
+
+int main()
+{
+    Data_initiate();//设施点与需求点之间距离初试化
+    genren();//设施点与需求点之间交建时间服从对数正态分布随机产生
+    ratio();//计算设施点准时送达率
+
+    return 0;
+
+}
+
+//函数定义：设施点与需求点之间距离的初始化
+void Data_initiate()
+{
+    srand((int)time(0));
+    //存储新设施点与需求点之间的距离
+    ofstream TrNData;
+    TrNData.open("E:\\Profession\\Paper-Gra\\Program2\\Input\\DisN.txt");
+    //存储原有企业设施点与需求点之间的距离
+    ofstream TrEData;
+    TrEData.open("E:\\Profession\\Paper-Gra\\Program2\\Input\\DisE.txt");
+
+    //新设施候选点与需求点之间的距离，范围[1,51]
+    for (int n = 0; n < DP; n++)
+    {
+        for (int k = 0; k < jN; k++)
+        {
+            distanN[n][k] = 1 + (int)(50.0 * rand() / (RAND_MAX + 1.0));
+            std::cout << setw(4) << left << distanN[n][k] << " ";
+            TrNData << setw(4) << left << distanN[n][k] << " ";
+        }
+        std::cout << endl;
+        TrNData << endl;
+    }
+    TrNData.close();
+
+    //原有设施候选点与需求点之间的距离,范围[1,51]
+    for (int n = 0; n < DP; n++)
+    {
+        for (int k = 0; k < jE; k++)
+        {
+            distanE[n][k] = 1 + (int)(50.0 * rand() / (RAND_MAX + 1.0));
+            std::cout << setw(4) << left << distanE[n][k] << " ";
+            TrEData << setw(4) << left << distanE[n][k] << " ";
+        }
+        std::cout << endl;
+        TrEData << endl;
+    }
+    TrEData.close();
+    srand((int)time(0));
+    //需求点的需求量设置：
+    ofstream DemQua;
+
+    DemQua.open("E:\\Profession\\Paper-Gra\\Program2\\Input\\DemQua_data.txt");
+
+    std::cout << "w[i]：" << endl;
+    for (int i = 0; i < DP; i++)
+    {
+        w[i] = 10 + (int)(90.0 * rand() / (RAND_MAX + 1.0));//需求量范围[10,100]
+        std::cout << w[i] << " ";
+        DemQua << w[i] << " ";
+
+    }
+    std::cout << endl;
+    DemQua.close();
+
+    //新设施开设的固定成本设置：
+    ofstream CostFac;
+    CostFac.open("E:\\Profession\\Paper-Gra\\Program2\\Input\\CostFac_data.txt");
+
+    std::cout << "Cfac[jN]：" << endl;
+    for (int j = 0; j < jN; j++)
+    {
+        Cfac[j] = 50 + (int)(200.0 * rand() / (RAND_MAX + 1.0));//取值范围[50,250]
+        std::cout << Cfac[j] << " ";
+        CostFac << Cfac[j] << " ";
+    }
+    std::cout << endl;
+    CostFac.close();
+
+}
+
+//函数定义：设施点与需求点之间交通时间对数正态分布随机产生
+void genren()
+{
+    ofstream TrsNData;
+    TrsNData.open("E:\\Profession\\Paper-Gra\\Program2\\Input\\TNtimmean.txt");
+    ofstream TrsEData;
+    TrsEData.open("E:\\Profession\\Paper-Gra\\Program2\\Input\\TEtimmean.txt");
+
+    std::random_device rd;
+    std::mt19937 gen(rd());
+
+    // 生成随机均值和标准差
+    //std::uniform_real_distribution<> dis1(30.0, 60.0); // 均值随机分布
+    std::uniform_real_distribution<> dis2(0.1, 0.5); // 标准差随机分布
+    // 生成N组符合对数正态分布的随机数组
+    //新进入市场企业设施点与需求点之间的交通时间分布数组生成
+    for (int i = 0; i < DP; i++)
+    {
+        for (int j = 0; j < jN; j++)
+        {
+            TNmean[i][j] = distanN[i][j] / speed * 60; // 随机均值
+            TNsigma[i][j] = dis2(gen); // 随机标准差
+            std::lognormal_distribution<double> dist(std::log(TNmean[i][j]), TNsigma[i][j]); // 生成对数正态分布对象
+            for (int k = 0; k < M; k++)
+            {
+                TrantimeN[i][j][k] = dist(gen); // 生成符合对数正态分布的随机数
+            }
+        }
+    }
+    //原有企业设施点与需求点之间的交通时间分布数组生成
+    for (int i = 0; i < DP; i++)
+    {
+        for (int j = 0; j < jE; j++)
+        {
+            TEmean[i][j] = distanE[i][j] / speed * 60; // 随机均值（以距离除以速度为交通时间分布的均值）
+            TEsigma[i][j] = dis2(gen); // 随机标准差
+            std::lognormal_distribution<double> dist(std::log(TEmean[i][j]), TEsigma[i][j]); // 生成对数正态分布对象
+            for (int k = 0; k < M; k++)
+            {
+                TrantimeE[i][j][k] = dist(gen); // 生成符合对数正态分布的随机数
+            }
+        }
+    }
+
+
+    //输出并存储新进入市场企业新设施点与需求点之间的交通时间数组
+    for (int i = 0; i < DP; i++)
+    {
+        for (int j = 0; j < jN; j++)
+        {
+            std::cout << "XN[" << i << "," << j << "] = " << TNmean[i][j] << " ";
+            std::cout << "YN[" << i << "," << j << "] = " << TNsigma[i][j] << std::endl;
+            std::cout << "AN[" << i << "," << j << "] = [";
+            for (int k = 0; k < M; k++)
+            {
+                std::cout << setw(6) << left << fixed << setprecision(2) << TrantimeN[i][j][k] << " ";
+
+            }
+            std::cout << "]" << std::endl;
+            TrsNData << setw(6) << left << fixed << setprecision(2) << TNmean[i][j] << " ";
+        }
+        TrsNData << endl;
+    }
+    TrsNData.close();
+
+    //输出并存储原有企业设施点与需求点之间的交通时间数组
+    for (int i = 0; i < DP; i++)
+    {
+        for (int j = 0; j < jE; j++)
+        {
+            std::cout << "XE[" << i << "," << j << "] = " << TEmean[i][j] << " ";
+            std::cout << "YE[" << i << "," << j << "] = " << TEsigma[i][j] << std::endl;
+            std::cout << "AE[" << i << "," << j << "] = [";
+            for (int k = 0; k < M; k++)
+            {
+                std::cout << setw(6) << left << fixed << setprecision(2) << TrantimeE[i][j][k] << " ";
+
+            }
+            std::cout << "]" << std::endl;
+            TrsEData << setw(6) << left << fixed << setprecision(2) << TEmean[i][j] << " ";
+        }TrsEData << endl;
+    }
+    TrsEData.close();
+
+
+
+}
+
+//函数定义：设施点与需求点之间准时送达率计算
+void ratio()
+{    //准时送达率初始化
+    double rN[DP][jN] = { 0 }, rE[DP][jE] = { 0 };
+
+    ofstream RaNData;
+    RaNData.open("E:\\Profession\\Paper-Gra\\Program2\\Input\\RaNData.txt");
+    ofstream RaEData;
+    RaEData.open("E:\\Profession\\Paper-Gra\\Program2\\Input\\RaEData.txt");
+
+    for (int i = 0; i < DP; i++)
+    {
+        //计算新设施点的准时送达率
+        cout << "rN[" << i << "]: ";
+        for (int j = 0; j < jN; j++)
+        {
+            for (int k = 0; k < M; k++)
+            {
+                if (TrantimeN[i][j][k] <= t)
+                {
+                    rN[i][j] += 1;
+                }
+            }
+            rN[i][j] = rN[i][j] / M;
+
+            cout << rN[i][j] << " ";
+            RaNData << rN[i][j] << " ";
+        }
+        cout << endl;
+        RaNData << endl;
+
+        //计算原有设施点准时送达率
+        cout << "rE[" << i << "]: ";
+        for (int j = 0; j < jE; j++)
+        {
+            int count = 0;
+            for (int k = 0; k < M; k++)
+            {
+                if (TrantimeE[i][j][k] <= t)
+                {
+                    rE[i][j] += 1;
+                }
+
+            }
+            rE[i][j] = rE[i][j] / M;
+            cout << rE[i][j] << " ";
+            RaEData << rE[i][j] << " ";
+        }
+        cout << endl;
+        RaEData << endl;
+    }
+    RaNData.close();
+    RaEData.close();
+}

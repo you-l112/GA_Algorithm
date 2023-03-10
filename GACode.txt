@@ -1,0 +1,714 @@
+#include<iostream>
+#include<time.h>
+#include<stdlib.h>
+#include<math.h>
+#include<cmath>
+#include<fstream>
+#include<algorithm>
+using namespace std;
+
+/*************参数设置****************/
+//遗传算法相关参数：
+const int colony_size = 50;//种群规模
+const int Gennum = 20;//最大迭代次数
+const double pOVER = 0.8;//杂交的概率
+const double pMUTATE = 0.7;//变异的概率
+double sum_GF;//适应度值之和
+
+
+const int DP = 60; //需求点个数
+const int jN = 8; //候选设施点数量 也是每条染色体的长度
+const int jE = 5; //市场原有设施点数量
+const int Bn = 40000; //新设施预算约束
+const int Be = 20000; //原有设施质量配置预算约束
+const int pf = 100; //单位市场份额利润
+
+const double Costdeli = 0.1;//单位距离配送成本
+const int CostQ = 10; //提升单位服务质量的成本
+const int qmax = 10; //提升的服务质量最高等级
+const int RangeD = 60;//到店消费有效服务范围半径
+const int RangeP = 30;//免费配送服务范围半径
+
+//敏感系数相关参数
+const double beta1 = 0.8;//顾客对于设施点配置服务质量的敏感系数
+const double beta2 = 0.6;//顾客对于设施点距离的敏感系数
+const double beta3 = 0.7;//顾客对于设施点交通时间的敏感系数
+//输入参数
+int w[DP];//各个需求点对应的需求量 
+int Cfac[jN];//新设施候选点开设的固定成本
+double dis[DP][jN], dis2[DP][jE];//需求点和设施点之间的距离
+double TrantimeN[DP][jN], TrantimeE[DP][jE];//需求点和设施点的交通时间
+double ratioN[DP][jN], ratioE[DP][jE];//设施点准时送达率
+
+//初始质量配置
+double InitiaQE = 1;//市场原有企业设施配置的服务质量等级（初始配置等级）
+double InitiaQN = 1;//新进入企业开设的新设施点配置的服务质量等级（初始配置等级）
+
+//结构体定义
+struct indival
+{
+    int code[jN];//相当于新设施候选点是否开设的变量
+    double bestQN;//个体对应的均衡质量配置
+    double bestQE;//原有企业的最佳质量配置    
+    double ObjN;//目标函数值：设施利润
+    double ObjE;//原有企业的目标值利润
+    double BTn;//新设施花费总预算
+    double BTe;//原有企业花费总预算
+    double cfitness;//相对适应度值比例之和
+    double rfitness;//相对适应度值比例
+    double tim;//代码运行时间
+}Group[colony_size];//结构变量Group
+
+indival newGroup[colony_size];//用于排序
+indival GenBest[Gennum];//记录种群内最优值
+indival OutGen;//输出所有迭代过程的最优值
+
+struct DemandProb//标准化处理中间值
+{
+    double FdN[DP][jN], FpN[DP][jN];//新设施标准化处理后的线下到店消费和线上配送消费部分吸引函数值
+    double FdE[DP][jE], FpE[DP][jE];//原有设施标准化处理后的线下到店消费和线上配送消费部分吸引函数值 
+    double UNd[DP][jN], UNp[DP][jN], UEd[DP][jE], UEp[DP][jE];//新设施和原有设施点对于需求点的效用函数值（在考虑有效服务范围限制之后）
+    double PbdN[DP][jN], PbpN[DP][jN], PbdE[DP][jE], PbpE[DP][jE];//新设施和原有设施竞争市场份额比例   
+}Deprob;
+
+/*************函数声明****************/
+double random(double, double);//随机数函数
+void Data_initiate();//参数输入
+void initiate();//初始解生成
+void standard();//标准化
+void calvalue();//目标函数值计算
+void Select();//个体选择函数声明
+void xOVER(int, int);
+void Crossover();//交叉函数声明
+void Mutate();//变异函数声明
+
+
+
+
+/**********主函数************/
+int main()
+{
+    clock_t start, finish0, finish;//clock_t为CPU时钟计时单元数
+    start = clock();//clock()函数返回此时CPU时钟计时单元数
+    double timegap;
+    int Index;
+    Data_initiate();//参数输入
+    initiate();//初始解生成
+    standard();//标准化处理
+    calvalue();//目标函数值计算
+    //迭代循环结果比较
+    for (int k = 0; k < Gennum; k++)
+    {
+        srand((unsigned)time(NULL));
+        Select();//个体算子选择
+        Crossover();//个体交叉操作
+        Mutate();//个体基因变异操作     
+        standard();//标准化处理
+        calvalue();//适应度值的计算
+
+         //种群内最优值输出：
+        for (int h = 0; h < colony_size; h++)
+        {
+
+            if (GenBest[k].ObjN < Group[h].ObjN)
+            {
+                GenBest[k].ObjN = Group[h].ObjN;
+                GenBest[k].bestQN = Group[h].bestQN;
+                GenBest[k].ObjE = Group[h].ObjE;
+                GenBest[k].bestQE = Group[h].bestQE;
+                GenBest[k].BTn = Group[h].BTn;
+                GenBest[k].BTe = Group[h].BTe;
+                for (int i = 0; i < jN; i++)
+                {
+                    GenBest[k].code[i] = Group[h].code[i];
+                }
+            }
+
+        }
+
+        //每次迭代CPU运行时间
+        finish0 = clock();
+        timegap = double(finish0 - start) / CLOCKS_PER_SEC;
+        GenBest[k].tim = timegap;
+
+
+        //每次迭代结果输出，比较每次迭代目标函数值选出最优值并输出
+        if (OutGen.ObjN < GenBest[k].ObjN)
+        {
+            Index = k + 1;
+            OutGen.ObjN = GenBest[k].ObjN;
+            OutGen.bestQN = GenBest[k].bestQN;
+            OutGen.ObjE = GenBest[k].ObjE;
+            OutGen.bestQE = GenBest[k].bestQE;
+            OutGen.BTn = GenBest[k].BTn;
+            OutGen.BTe = GenBest[k].BTe;
+            OutGen.tim = GenBest[k].tim;
+            for (int i = 0; i < jN; i++)
+            {
+                OutGen.code[i] = GenBest[k].code[i];
+            }
+        }
+
+
+    }
+    finish = clock();//clock()函数返回此时CPU时钟计时单元数
+    cout << endl << "总运行时间:" << double(finish - start) / CLOCKS_PER_SEC << "S" << endl;
+    //finish与start的差值即为程序运行花费的CPU时钟单元数量，再除每秒CPU有多少个时钟单元，即为程序耗时
+    std::cout << "运行结束！" << endl;
+    return 0;
+
+
+
+}
+
+
+
+
+
+
+/*************函数定义****************/
+
+//随机产生区间内的随机数
+double random(double start, double end)
+{
+    return start + (end - start) * rand() / (RAND_MAX + 1.0);
+}
+
+//参数输入函数定义
+void Data_initiate()
+{
+    //需求量的输入
+    ifstream DemQua;
+    DemQua.open("E:\\Profession\\Paper-Gra\\Program2\\Input\\DemQua_data.txt");
+
+    for (int i = 0; i < DP; i++)
+    {
+        DemQua >> w[i];
+    }
+    DemQua.close();
+
+    //新设施开设的固定成本设置：
+    ifstream CostFac;
+    CostFac.open("E:\\Profession\\Paper-Gra\\Program2\\Input\\CostFac_data.txt");
+    for (int j = 0; j < jN; j++)
+    {
+        CostFac >> Cfac[j];
+    }
+    CostFac.close();
+
+    //新设施候选点与需求点之间的距离 
+    ifstream DisDatajN;
+    DisDatajN.open("E:\\Profession\\Paper-Gra\\Program2\\Input\\DisN.txt");
+    for (int n = 0; n < DP; n++)
+    {
+
+        for (int k = 0; k < jN; k++)
+        {
+            DisDatajN >> dis[n][k];
+        }
+    }
+    DisDatajN.close();
+
+    //原有设施点与需求点之间的距离
+    ifstream DisDatajE;
+    DisDatajE.open("E:\\Profession\\Paper-Gra\\Program2\\Input\\DisE.txt");
+    for (int n = 0; n < DP; n++)
+    {
+        for (int l = 0; l < jE; l++)
+        {
+            DisDatajE >> dis2[n][l];
+        }
+    }
+    DisDatajE.close();
+    //需求点与新设施点交通时间参数输入
+    ifstream TrNmean;
+    TrNmean.open("E:\\Profession\\Paper-Gra\\Program2\\Input\\TNtimmean.txt");
+    for (int i = 0; i < DP; i++)
+    {
+        for (int j = 0; j < jN; j++)
+        {
+            TrNmean >> TrantimeN[i][j];
+        }
+    }TrNmean.close();
+
+    //需求点与原有企业设施点交通时间参数输入
+    ifstream TrEmean;
+    TrEmean.open("E:\\Profession\\Paper-Gra\\Program2\\Input\\TEtimmean.txt");
+    for (int i = 0; i < DP; i++)
+    {
+        for (int j = 0; j < jE; j++)
+        {
+            TrEmean >> TrantimeE[i][j];
+        }
+    }TrEmean.close();
+
+    //新设施点准时送达率参数输入
+    ifstream RaN;
+    RaN.open("E:\\Profession\\Paper-Gra\\Program2\\Input\\RaNData.txt");
+    for (int i = 0; i < DP; i++)
+    {
+        for (int j = 0; j < jN; j++)
+        {
+            RaN >> ratioN[i][j];
+        }
+    }RaN.close();
+
+    //原有设施点准时送达率参数输入
+    ifstream RaE;
+    RaE.open("E:\\Profession\\Paper-Gra\\Program2\\Input\\RaEData.txt");
+    for (int i = 0; i < DP; i++)
+    {
+        for (int j = 0; j < jN; j++)
+        {
+            RaE >> ratioE[i][j];
+        }
+    }RaE.close();
+}
+
+//初始解生成函数定义
+void initiate()
+{
+    ofstream Col_data;
+    Col_data.open("E:\\Profession\\Paper-Gra\\Program2\\Input\\GA02Input.txt");
+
+
+    for (int i = 0; i < colony_size; i++)//种群规模为colony_size=50，此为种群个体初始化
+
+    {
+        int _nMaxNum = jN;//所有候选点
+        int _nHaveNum = 0;//已经选取的点
+        int _nIndex = 0;//已经遍历的个数
+        int _nNeedNum = 1 + (int)(jN * rand() / (RAND_MAX + 1.0));//要取的个数
+        std::cout << "_nNeedNum:" << _nNeedNum << endl;
+
+        for (int j = 0; j < jN; j++)
+        {
+            if (rand() / (double)RAND_MAX < ((double)_nNeedNum - (double)_nHaveNum) / ((double)_nMaxNum - (double)_nIndex))
+            {
+                Group[i].code[j] = 1;
+                std::cout << Group[i].code[j] << " ";
+                _nHaveNum++;
+            }
+            else
+            {
+                Group[i].code[j] = 0;
+                std::cout << Group[i].code[j] << " ";
+            }
+            _nIndex++;
+
+        }
+
+        std::cout << endl;
+    }
+    Col_data << "种群初始化解：" << endl;//输出种群初始化解
+    for (int i = 0; i < colony_size; i++)
+    {
+        Col_data << "Col_data[" << i + 1 << "]:";
+        for (int j = 0; j < jN; j++)
+        {
+            Col_data << Group[i].code[j] << " ";
+        }
+        Col_data << endl;
+        Group[i].cfitness = 0;
+        Group[i].rfitness = 0;
+    }
+    Col_data.close();
+}
+
+//标准化处理函数定义
+void standard()
+{
+    double(*fdN)[jN] = new double[DP][jN]();
+    double(*fpN)[jN] = new double[DP][jN]();
+    double(*fdE)[jE] = new double[DP][jE]();
+    double(*fpE)[jE] = new double[DP][jE]();
+    double maxfd = 0, maxfp = 0, minfd = 0, minfp = 0;
+    double eta = 0.01;
+
+    for (int i = 0; i < DP; i++)
+    {
+        for (int j = 0; j < jN; j++)
+        {
+            //到店消费范围判断
+            if (dis[i][j] <= RangeD)
+            {
+                fdN[i][j] = pow(dis[i][j], beta2) + eta;
+            }
+            //配送范围判断
+            if (dis[i][j] <= RangeP)
+            {
+                fpN[i][j] = pow(TrantimeN[i][j], beta3) * ratioN[i][j] + eta;
+            }
+
+        }
+
+    }
+
+    for (int i = 0; i < DP; i++)
+    {
+        for (int j = 0; j < jE; j++)
+        {
+            //到店消费范围判断
+            if (dis2[i][j] <= RangeD)
+            {
+                fdE[i][j] = pow(dis2[i][j], beta2) + eta;
+            }
+            //配送范围判断
+            if (dis2[i][j] <= RangeP)
+            {
+                fpE[i][j] = pow(TrantimeE[i][j], beta3) * ratioE[i][j] + eta;
+            }
+        }
+    }
+    //计算标准化区间
+    for (int i = 0; i < DP; i++)
+    {
+        for (int j = 0; j < jN; j++)
+        {
+            if (fdN[i][j] < minfd)
+            {
+                minfd = fdN[i][j];
+            }
+            if (fdN[i][j] > maxfd)
+            {
+                maxfd = fdN[i][j];
+            }
+            if (fpN[i][j] < minfp)
+            {
+                minfp = fpN[i][j];
+            }
+            if (fpN[i][j] > maxfp)
+            {
+                maxfp = fpN[i][j];
+            }
+
+        }
+        for (int j = 0; j < jE; j++)
+        {
+            if (fdE[i][j] < minfd)
+            {
+                minfd = fdE[i][j];
+            }
+            if (fdE[i][j] > maxfd)
+            {
+                maxfd = fdE[i][j];
+            }
+            if (fpE[i][j] < minfp)
+            {
+                minfp = fpE[i][j];
+            }
+            if (fpE[i][j] > maxfp)
+            {
+                maxfp = fpE[i][j];
+            }
+        }
+    }
+
+    for (int i = 0; i < DP; i++)
+    {
+        for (int j = 0; j < jN; j++)
+        {
+            Deprob.FdN[i][j] = (fdN[i][j] - minfd) / (maxfd - minfd);
+            Deprob.FpN[i][j] = (fpN[i][j] - minfp) / (maxfp - minfp);
+        }
+        for (int l = 0; l < jE; l++)
+        {
+            Deprob.FdE[i][l] = (fdE[i][l] - minfd) / (maxfd - minfd);
+            Deprob.FpE[i][l] = (fpE[i][l] - minfp) / (maxfp - minfp);
+        }
+    }
+    delete[] fdN;
+    delete[] fpN;
+    delete[] fdE;
+    delete[] fpE;
+}
+
+//新进入企业设施效用计算函数定义
+double UnitityStdN(int a, double b, double c)
+{
+    double UnitityN = 0;
+    UnitityN = a * pow(b, beta1) * c;
+    return UnitityN;
+}
+//原有企业设施点设施效用计算函数定义
+double UnitityStdE(int a, double b, double c)
+{
+    double UnitityE = 0;
+    UnitityE = (a + InitiaQE) * pow(b, beta1) * c;
+    return UnitityE;
+}
+
+//目标函数值计算函数定义
+void calvalue()
+{    
+    double StackBestObjN, StackBestObjE, StackBestBN, StackBestBE;
+    double StackObjN, StackObjE, StackBN, StackBE;
+    double SumUN, SumUE, SumU;
+    int StackqN, StackqE;
+    const int StackNum = 10;
+    int SlqN[StackNum], SlqE[StackNum];    
+    double StackGapQ;
+    sum_GF = 0;
+
+    ofstream ResultGA;
+    ResultGA.open("E:\\Profession\\Paper-Gra\\Program2\\Output\\ResultGA02.txt");
+    //所有解的遍历计算
+    for (int h = 0; h < colony_size; h++)
+    {        
+        StackBestObjN = 0, StackBestObjE = 0, StackBestBN = 0, StackBestBE = 0;
+        StackqN = 1, StackqE = 1;
+        StackGapQ = 2;
+
+        //均衡质量决策博弈
+        while (StackGapQ > 1)
+        {
+            int u = 0;
+            int v = 0;            
+
+            //新设施所有质量解的遍历
+            for (int qN = 1; qN <= qmax; qN++)
+            {
+                StackObjN = 0, StackBN = 0;
+                //所有需求点遍历
+                for (int i = 0; i < DP; i++)
+                {
+                    SumUN = 0, SumUE = 0, SumU = 0;
+                    //单个需求点所获得的所有吸引力总值计算
+                    for (int j = 0; j < jN; j++)//新设施点对于需求点的到店消费需求和配送需求的吸引力值
+                    {
+                        Deprob.UNd[i][j] = UnitityStdN(Group[h].code[i], qN, Deprob.FdN[i][j]);
+                        Deprob.UNp[i][j] = UnitityStdN(Group[h].code[i], qN, Deprob.FpN[i][j]);
+                        SumUN = SumUN + Deprob.UNd[i][j] + Deprob.UNp[i][j];
+                    }
+                    for (int l = 0; l < jE; l++)//原有企业设施点对于需求点的到店消费需求和配送需求的吸引力值
+                    {
+
+                        Deprob.UEd[i][l] = UnitityStdE(1, StackqE, Deprob.FdE[i][l]);
+                        Deprob.UEp[i][l] = UnitityStdE(1, StackqE, Deprob.FpE[i][l]);
+                        SumUE = SumUE + Deprob.UEd[i][l] + Deprob.UEp[i][l];
+                    }
+                    SumU = SumUN + SumUE;//单个需求点所获得的新旧设施的吸引力总值（包括到店需求和配送需求）
+
+                    //新进入市场企业所有开设设施点所获利润总和
+                    for (int m = 0; m < jN; m++)
+                    {
+                        Deprob.PbdN[i][m] = Deprob.UNd[i][m] / SumU;//到店消费需求竞争比例
+                        Deprob.PbpN[i][m] = Deprob.UNp[i][m] / SumU;//配送消费需求竞争比例
+                        //利润目标函数值的计算
+                        StackObjN = StackObjN + (Deprob.PbdN[i][m] + Deprob.PbpN[i][m]) * w[i] * pf - (Cfac[m] + qN * CostQ + dis[i][m] * Costdeli) * Group[h].code[i];
+                        //总预算值计算
+                        StackBN = StackBN + (Cfac[m] + qN * CostQ) * Group[h].code[i];
+                    }
+                }
+                //选出最大利润值和最优质量决策等级，输出预算
+                if (StackObjN >= StackBestObjN && StackBN <= Bn)
+                {
+                    StackBestObjN = StackObjN;
+                    StackqN = qN;
+                    StackBestBN = StackBN;
+                }
+            }
+            SlqN[u] = StackqN;//博弈过程中新设施的质量决策
+
+            //市场原有企业设施点所有质量解的遍历
+            for (int qE = 1; qE <= qmax - InitiaQE; qE++)
+            {
+                StackObjE = 0, StackBE = 0;
+                //所有需求点遍历
+                for (int i = 0; i < DP; i++)
+                {
+                    SumUN = 0, SumUE = 0, SumU = 0;
+                    //单个需求点所获得的所有吸引力总值计算
+                    for (int j = 0; j < jN; j++)//新设施点对于需求点的到店消费需求和配送需求的吸引力值
+                    {
+                        Deprob.UNd[i][j] = UnitityStdN(Group[h].code[i], StackqN, Deprob.FdN[i][j]);
+                        Deprob.UNp[i][j] = UnitityStdN(Group[h].code[i], StackqN, Deprob.FpN[i][j]);
+                        SumUN = SumUN + Deprob.UNd[i][j] + Deprob.UNp[i][j];
+                    }
+                    for (int l = 0; l < jE; l++)//原有企业设施点对于需求点的到店消费需求和配送需求的吸引力值
+                    {
+                        Deprob.UEd[i][l] = UnitityStdE(1, qE, Deprob.FdE[i][l]);
+                        Deprob.UEp[i][l] = UnitityStdE(1, qE, Deprob.FpE[i][l]);
+                        SumUE = SumUE + Deprob.UEd[i][l] + Deprob.UEp[i][l];
+                    }
+                    SumU = SumUN + SumUE;//单个需求点所获得的新旧设施的吸引力总值（包括到店需求和配送需求）
+
+                    //新进入市场企业所有开设设施点所获利润总和
+                    for (int m = 0; m < jE; m++)
+                    {
+                        Deprob.PbdE[i][m] = Deprob.UEd[i][m] / SumU;//到店消费需求竞争比例
+                        Deprob.PbpE[i][m] = Deprob.UEp[i][m] / SumU;//配送消费需求竞争比例
+                         //利润目标函数值的计算
+                        StackObjE = StackObjE + (Deprob.PbdE[i][m] + Deprob.PbpE[i][m]) * w[i] * pf - (qE * CostQ + dis2[i][m] * Costdeli);
+                        //总预算值计算
+                        StackBE = StackBE + qE * CostQ + dis2[i][m] * Costdeli;
+                    }
+                }
+                //选出最大利润值和最优质量决策等级，输出预算
+                if (StackObjE >= StackBestObjE && StackBE <= Be)
+                {
+                    StackBestObjE = StackObjE;
+                    StackqE = qE;
+                    StackBestBE = StackBE;
+                }
+            }
+            SlqE[v] = StackqE;//博弈过程中原有设施的质量决策
+
+            //质量博弈判断条件
+            while (u > 0)
+            {
+                StackGapQ = fabs(SlqN[u] - SlqN[u - 1]) + fabs(SlqE[v] - SlqE[v - 1]);
+            }
+            u++;
+            v++;
+            break;//当新企业设施点配套质量决策和原有企业设施点配套质量决策都不再改进时停止循环并输出结果           
+        }
+        //新进入市场企业设施点相关结果输出：
+        Group[h].ObjN = StackBestObjN;
+        Group[h].bestQN = StackqN;
+        Group[h].BTn = StackBestBN;
+
+        //市场原有企业设施点相关结果输出：
+        Group[h].ObjE = StackBestObjE;
+        Group[h].bestQE = StackqE;
+        Group[h].BTe = StackBestBE;
+        //种群内所有适应度值总和：
+        sum_GF=sum_GF+ Group[h].ObjN;
+
+        //第几代QN-TN-BN-QE-TE-BE-LOC
+        cout << h << "-QN - " << Group[h].bestQN << " TN - " << Group[h].ObjN << " BN - " << Group[h].BTn;
+        cout << " QE-" << Group[h].bestQE << "TE-" << Group[h].ObjE << " BE-" << Group[h].BTe << " Loc-";
+        for (int k = 0; k < jN; k++)
+        {
+            cout << Group[h].code[k];
+        }cout << endl;
+
+
+        ResultGA << h << "-QN - " << Group[h].bestQN << " TN - " << Group[h].ObjN << " BN - " << Group[h].BTn;
+        ResultGA << " QE-" << Group[h].bestQE << "TE-" << Group[h].ObjE << " BE-" << Group[h].BTe << " Loc-";
+        for (int k = 0; k < jN; k++)
+        {
+            ResultGA << Group[h].code[k];
+        }ResultGA << endl;
+
+
+    }
+
+    ResultGA.close();
+}
+
+//个体 选择 函数定义
+void Select()
+{
+    double p;
+    //计算相对适应度比例
+    for (int h = 0; h < colony_size; h++)
+    {
+        Group[h].rfitness = Group[h].ObjN / sum_GF;//适应度值的比例
+
+    }
+
+    //计算相对适应度之和
+    Group[0].cfitness = Group[0].rfitness;
+    for (int h = 1; h < colony_size; h++)
+    {
+        Group[h].cfitness = Group[h - 1].cfitness + Group[h].rfitness;//计算相对适应度之和，构筑轮盘分区
+    }
+
+    for (int i = 0; i < colony_size; i++)
+    {
+        p = random(0, 1);//随机产生0到1之间的随机数
+        if (p < Group[0].cfitness)       
+            newGroup[i] = Group[0];
+        else
+        {
+            for (int j = 1; j < colony_size; j++)
+            {
+                if (p >= Group[j - 1].cfitness && p < Group[j].cfitness)
+                {
+                    newGroup[i] = Group[j];
+                    break;
+                }
+            }
+        }        
+    }
+    //将挑选的个体赋值给Group
+    for (int i = 0; i < colony_size; i++)
+    {
+        Group[i] = newGroup[i];
+    }
+}
+
+//交叉函数定义
+void Crossover()
+{
+    int mem;
+    int one = 0;
+    int sum_xo = 0;//记录杂交的数目
+    double px;
+    for (mem = 0; mem < colony_size; mem++)
+    {
+        px = random(0, 1);
+        if (px < pOVER)
+        {
+            sum_xo++;
+            if (sum_xo % 2 == 0)//若为偶数
+            {
+                xOVER(one, mem);
+            }
+            else//若为奇数
+            {
+                one = mem;
+            }
+        }
+    }
+
+}
+
+//交叉函数内部个体之间交换操作函数定义
+void xOVER(int one, int two)
+{
+    int r;
+    r = 2 + (int)(jN * rand() / (RAND_MAX + 1.0));
+    for (int j = 0; j < jN; j++)
+    {
+        if (j < r)
+        {
+            Group[one].code[j] = Group[one].code[j];
+            Group[two].code[j] = Group[two].code[j];
+        }
+        else
+        {
+            Group[one].code[j] = Group[two].code[j];
+            Group[two].code[j] = Group[one].code[j];
+
+        }
+    }
+
+}
+
+//MUTATE函数定义
+void Mutate()
+{
+    double r;
+    for (int i = 0; i < colony_size; i++)
+    {
+        for (int j = 0; j < jN; j++)
+        {
+            r = random(0, 1);
+            if (r < pMUTATE)
+            {
+                if (Group[i].code[j] == 0)
+                {
+                    Group[i].code[j] = 1;
+                }
+                else
+                {
+                    Group[i].code[j] = 0;
+                }
+            }
+
+        }
+
+    }
+}
